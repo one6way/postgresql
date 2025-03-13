@@ -1,72 +1,103 @@
-# PostgreSQL для Kubernetes
+# PostgreSQL для TeamCity
 
-Этот проект содержит Helm чарт для развертывания отказоустойчивого кластера PostgreSQL в Kubernetes с репликацией.
+Этот репозиторий содержит все необходимые файлы для развертывания PostgreSQL в Kubernetes с использованием Helm.
 
-## Содержимое проекта
+## Содержимое репозитория
 
-- `postgresql-chart/` - Helm чарт для PostgreSQL
-  - `templates/` - Шаблоны Kubernetes ресурсов
-  - `values.yaml` - Файл значений по умолчанию
-  - `Chart.yaml` - Метаданные чарта
-  - `README.md` - Документация по чарту
+- `postgresql-charts/postgresql/` - Helm чарты PostgreSQL от Bitnami
+- `postgresql-image.tar` - Docker образ PostgreSQL для офлайн установки
 
-## Быстрый старт
+## Данные для подключения к PostgreSQL
 
-1. Клонируйте репозиторий:
+- **Database host[:port]**: postgresql.teamcity.svc.cluster.local:5432
+- **Database name**: teamcity
+- **User name**: teamcity
+- **Password**: teamcity123
+
+## Инструкции по развертыванию
+
+### Предварительные требования
+
+- Установленный Kubernetes кластер (например, Minikube)
+- Установленный Helm
+- Установленный Docker
+
+### Установка с доступом к интернету
+
+1. Добавьте репозиторий Helm:
    ```bash
-   git clone https://github.com/yourusername/postgresql-k8s.git
-   cd postgresql-k8s
+   helm repo add stable https://charts.helm.sh/stable
+   helm repo update
    ```
 
-2. Установите чарт:
+2. Создайте namespace для TeamCity:
    ```bash
-   helm install my-postgresql ./postgresql-chart
+   kubectl create namespace teamcity
    ```
 
-3. Проверьте статус:
+3. Установите PostgreSQL:
    ```bash
-   kubectl get pods -l app.kubernetes.io/name=postgresql
+   helm install postgresql stable/postgresql --namespace teamcity \
+     --set postgresqlUsername=teamcity \
+     --set postgresqlPassword=teamcity123 \
+     --set postgresqlDatabase=teamcity \
+     --set persistence.size=10Gi
    ```
 
-## Особенности
+### Установка без доступа к интернету
 
-- Отказоустойчивая архитектура с репликацией
-- Настраиваемые параметры PostgreSQL
-- Поддержка синхронной и асинхронной репликации
-- Автоматическое резервное копирование с поддержкой S3
-- Мониторинг с помощью Prometheus и интеграция с Prometheus Operator
-- Постоянное хранилище данных
-- Автоматическое масштабирование
-- Шифрование данных
-- Интеграция с Vault для управления секретами
+1. Загрузите Docker образ PostgreSQL:
+   ```bash
+   docker load -i postgresql-image.tar
+   ```
 
-## Улучшения
+2. Создайте namespace для TeamCity:
+   ```bash
+   kubectl create namespace teamcity
+   ```
 
-В последней версии добавлены следующие улучшения:
+3. Установите PostgreSQL из локальных чартов:
+   ```bash
+   helm install postgresql ./postgresql-charts/postgresql/ \
+     --namespace teamcity \
+     --set auth.username=teamcity \
+     --set auth.password=teamcity123 \
+     --set auth.database=teamcity \
+     --set primary.persistence.size=10Gi
+   ```
 
-1. **Автоматическое масштабирование** - Поддержка HorizontalPodAutoscaler для автоматического масштабирования на основе использования CPU и памяти.
-2. **Улучшенное резервное копирование** - Поддержка резервного копирования в S3, мониторинг использования диска, улучшенная ротация резервных копий.
-3. **Шифрование данных** - Поддержка шифрования данных PostgreSQL для повышения безопасности.
-4. **Интеграция с Vault** - Поддержка интеграции с HashiCorp Vault для управления секретами.
-5. **Расширенный мониторинг** - Интеграция с Prometheus Operator через ServiceMonitor.
+## Настройка TeamCity
 
-## Документация
+1. Скачайте JDBC драйвер PostgreSQL:
+   ```bash
+   wget https://jdbc.postgresql.org/download/postgresql-42.7.2.jar -O /opt/teamcity/TeamCityData/lib/jdbc/postgresql-42.7.2.jar
+   ```
 
-Подробная документация доступна в [README.md](postgresql-chart/README.md) Helm чарта.
+2. При настройке TeamCity укажите следующие параметры подключения к базе данных:
+   - **Database host[:port]**: postgresql.teamcity.svc.cluster.local:5432
+   - **Database name**: teamcity
+   - **User name**: teamcity
+   - **Password**: teamcity123
 
-## Образ Docker
+## Проверка статуса
 
-В этом проекте используется официальный образ PostgreSQL:
-- Репозиторий: `postgres`
-- Тег: `15.4`
+Для проверки статуса PostgreSQL выполните:
+```bash
+kubectl get pods -n teamcity
+```
 
-## Примеры конфигураций
+## Подключение к PostgreSQL
 
-- [Базовая конфигурация](postgresql-chart/values.yaml)
-- [Тестовое окружение](postgresql-chart/values/test-values.yaml)
-- [Продакшн окружение](postgresql-chart/values/production-values.yaml)
-- [Продакшн окружение с улучшениями](postgresql-chart/values/production-values-enhanced.yaml)
+Для подключения к PostgreSQL из кластера:
+```bash
+kubectl run postgresql-client --rm --tty -i --restart='Never' --namespace teamcity \
+  --image docker.io/bitnami/postgresql:latest \
+  --env="PGPASSWORD=teamcity123" \
+  --command -- psql --host postgresql -U teamcity -d teamcity -p 5432
+```
 
-## Лицензия
-
-MIT
+Для подключения к PostgreSQL извне кластера:
+```bash
+kubectl port-forward --namespace teamcity svc/postgresql 5432:5432 &
+PGPASSWORD="teamcity123" psql --host 127.0.0.1 -U teamcity -d teamcity -p 5432
+```
