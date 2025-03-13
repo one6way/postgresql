@@ -1,0 +1,54 @@
+# Игнорировать Docker образы
+*.tar
+*.tar.gz
+
+# Игнорировать временные файлы
+*.tmp
+*.temp
+*.swp
+*~
+
+# Игнорировать файлы IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# Игнорировать файлы OS
+.DS_Store
+Thumbs.db
+
+# Игнорировать директории node_modules
+node_modules/
+
+# Игнорировать директории Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Игнорировать директории Java
+*.class
+*.jar
+*.war
+*.ear
+*.logs
+*.log
+target/ 
