@@ -1,0 +1,46 @@
+## Значения для тестового окружения
+
+## Количество реплик PostgreSQL
+replicaCount: 2
+
+## Настройки ресурсов
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "200m"
+
+## Настройки PostgreSQL
+postgresql:
+  username: postgres
+  password: postgres  # Для тестового окружения можно использовать простой пароль
+  database: testdb
+  
+  ## Настройки репликации
+  replication:
+    enabled: true
+    numSynchronousReplicas: 0  # Асинхронная репликация для тестов
+  
+  ## Настройки конфигурации PostgreSQL
+  config:
+    maxConnections: 50
+    sharedBuffers: "64MB"
+    effectiveCacheSize: "256MB"
+    logConnections: true
+    logDisconnections: true
+
+## Настройки хранилища
+persistence:
+  enabled: true
+  storageClass: "standard"
+  size: 1Gi
+
+## Настройки сервиса
+service:
+  type: ClusterIP
+
+## Настройки Pod Disruption Budget
+pdb:
+  enabled: false 

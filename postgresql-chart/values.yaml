@@ -1,0 +1,248 @@
+## PostgreSQL Helm Chart Values
+## Это файл значений по умолчанию для Helm Chart PostgreSQL
+
+## Общие настройки
+nameOverride: ""
+fullnameOverride: ""
+
+## Настройки образа PostgreSQL
+image:
+  repository: postgres
+  tag: "14.5"
+  pullPolicy: IfNotPresent
+
+## Настройки ресурсов
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+## Настройки PostgreSQL
+postgresql:
+  username: postgres
+  password: ""  # Если не указан, будет сгенерирован случайный пароль
+  database: postgres
+  existingSecret: ""  # Имя существующего секрета с паролями
+  port: 5432
+  
+  ## Настройки репликации
+  replication:
+    enabled: false
+    user: repl_user
+    password: ""  # Если не указан, будет сгенерирован случайный пароль
+    slaveReplicas: 1
+    synchronousCommit: "on"
+    numSynchronousReplicas: 1
+  
+  ## Настройки конфигурации PostgreSQL
+  config:
+    maxConnections: 100
+    sharedBuffers: "128MB"
+    effectiveCacheSize: "512MB"
+    maxWalSize: "1GB"
+    sharedPreloadLibraries: "pg_stat_statements"
+    logConnections: true
+    logDisconnections: true
+    logDuration: true
+    logStatement: "none"  # Возможные значения: none, ddl, mod, all
+
+## Настройки хранилища
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 8Gi
+  annotations: {}
+
+## Настройки автоматического масштабирования
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 180
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+
+## Настройки резервного копирования
+backup:
+  enabled: false
+  schedule: "0 1 * * *"  # Ежедневно в 1:00
+  image:
+    repository: bitnami/postgresql
+    tag: "14.5"
+    pullPolicy: IfNotPresent
+  destination:
+    type: "s3"  # Поддерживаемые типы: local, s3
+    s3:
+      bucket: ""
+      region: ""
+      prefix: "backups/postgresql"
+      accessKeyId: ""
+      secretAccessKey: ""
+      existingSecret: ""  # Имя существующего секрета с AWS credentials
+  retention:
+    days: 7
+    minBackups: 3
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  diskSpaceCheck:
+    enabled: true
+    threshold: 80  # Процент использования диска, при котором будет выполнена очистка
+
+## Настройки шифрования данных
+encryption:
+  enabled: false
+  existingKey: ""  # Существующий ключ шифрования (если не указан, будет сгенерирован)
+  ssl:
+    enabled: false
+    cert: ""  # Содержимое SSL сертификата (если не указано, будет сгенерирован самоподписанный)
+    key: ""   # Содержимое SSL ключа (если не указано, будет сгенерирован)
+    ca: ""    # Содержимое CA сертификата (опционально)
+    clientAuth: false  # Требовать аутентификацию клиента по сертификату
+
+## Интеграция с HashiCorp Vault
+vault:
+  enabled: false
+  image:
+    repository: hashicorp/vault
+    tag: "1.12.0"
+    pullPolicy: IfNotPresent
+  serviceAccountName: ""  # Если не указано, будет использовано имя релиза с суффиксом -vault
+  role: "postgres-role"
+  secretPath: "secret/data/postgres"
+  refreshInterval: 300  # Интервал проверки обновлений секретов в секундах
+  restartOnSecretChange: true  # Перезапускать PostgreSQL при изменении секретов
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
+
+## Настройки мониторинга
+metrics:
+  enabled: false
+  image:
+    repository: wrouesnel/postgres_exporter
+    tag: "v0.10.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "10m"
+    limits:
+      memory: "64Mi"
+      cpu: "50m"
+  serviceMonitor:
+    enabled: false
+    namespace: ""  # Если не указано, используется namespace релиза
+    interval: "30s"
+    scrapeTimeout: "10s"
+    honorLabels: true
+    path: "/metrics"
+    additionalLabels: {}
+    relabelings: []
+    metricRelabelings: []
+    scheme: ""
+    tlsConfig: {}
+    jobLabel: ""
+    targetLabels: []
+    podTargetLabels: []
+    sampleLimit: 0
+
+## Настройки сервиса
+service:
+  type: ClusterIP
+  port: 5432
+  annotations: {}
+
+## Настройки сетевой политики
+networkPolicy:
+  enabled: false
+  allowExternal: true
+  additionalRules: []
+
+## Настройки Pod Disruption Budget
+pdb:
+  enabled: false
+  minAvailable: 1
+  maxUnavailable: ""
+
+## Настройки affinity, nodeSelector и tolerations
+affinity: {}
+nodeSelector: {}
+tolerations: []
+
+## Настройки приоритетного класса
+priorityClassName: ""
+
+## Настройки безопасности
+securityContext:
+  enabled: true
+  fsGroup: 999
+  runAsUser: 999
+
+## Настройки init контейнеров
+initContainers: []
+
+## Настройки дополнительных контейнеров
+sidecars: []
+
+## Настройки дополнительных томов
+extraVolumes: []
+extraVolumeMounts: []
+
+## Настройки дополнительных переменных окружения
+extraEnvVars: []
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+
+## Настройки дополнительных аннотаций и меток
+podAnnotations: {}
+podLabels: {}
+
+## Настройки livenessProbe и readinessProbe
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1
+
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+  successThreshold: 1 

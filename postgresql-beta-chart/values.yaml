@@ -1,0 +1,103 @@
+## PostgreSQL Beta Helm Chart Values
+## Упрощенная версия с базовыми настройками
+
+## Общие настройки
+nameOverride: ""
+fullnameOverride: ""
+
+## Настройки образа PostgreSQL
+image:
+  repository: postgres
+  tag: "14.5"
+  pullPolicy: IfNotPresent
+
+## Количество реплик PostgreSQL
+replicaCount: 3
+
+## Настройки ресурсов
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+## Настройки PostgreSQL
+postgresql:
+  username: postgres
+  password: ""  # Если не указан, будет сгенерирован случайный пароль
+  database: postgres
+  existingSecret: ""  # Имя существующего секрета с паролями
+  port: 5432
+  
+  ## Настройки репликации
+  replication:
+    enabled: true
+    user: repl_user
+    password: ""  # Если не указан, будет сгенерирован случайный пароль
+    synchronousCommit: "on"
+    numSynchronousReplicas: 1
+  
+  ## Базовые настройки конфигурации PostgreSQL
+  config:
+    maxConnections: 100
+    sharedBuffers: "128MB"
+    effectiveCacheSize: "512MB"
+    maxWalSize: "1GB"
+    logConnections: true
+    logDisconnections: true
+
+## Настройки хранилища
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 8Gi
+
+## Настройки сервиса
+service:
+  type: ClusterIP
+  port: 5432
+  annotations: {}
+
+## Настройки Pod Disruption Budget
+pdb:
+  enabled: true
+  minAvailable: 1
+
+## Настройки affinity, nodeSelector и tolerations
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql-beta
+          topologyKey: kubernetes.io/hostname
+nodeSelector: {}
+tolerations: []
+
+## Настройки безопасности
+securityContext:
+  enabled: true
+  fsGroup: 999
+  runAsUser: 999
+
+## Настройки livenessProbe и readinessProbe
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1 

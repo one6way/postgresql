@@ -1,0 +1,54 @@
+## Значения для production окружения
+
+## Количество реплик PostgreSQL
+replicaCount: 5
+
+## Настройки ресурсов
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+
+## Настройки PostgreSQL
+postgresql:
+  # Рекомендуется использовать existingSecret в production
+  existingSecret: "postgresql-credentials"
+  
+  ## Настройки репликации
+  replication:
+    enabled: true
+    numSynchronousReplicas: 2
+  
+  ## Настройки конфигурации PostgreSQL
+  config:
+    maxConnections: 200
+    sharedBuffers: "512MB"
+    effectiveCacheSize: "1GB"
+    maxWalSize: "2GB"
+
+## Настройки хранилища
+persistence:
+  enabled: true
+  storageClass: "premium-ssd"
+  size: 50Gi
+
+## Настройки сервиса
+service:
+  type: ClusterIP
+
+## Настройки Pod Disruption Budget
+pdb:
+  enabled: true
+  minAvailable: 3
+
+## Настройки affinity
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: postgresql-beta
+        topologyKey: "kubernetes.io/hostname" 

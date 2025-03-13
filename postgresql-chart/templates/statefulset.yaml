@@ -1,0 +1,245 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "postgresql.fullname" . }}
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+  annotations:
+    cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+spec:
+  serviceName: {{ include "postgresql.fullname" . }}-headless
+  replicas: {{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.minReplicas }}{{ else }}{{ .Values.replicaCount }}{{ end }}
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "postgresql.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "postgresql.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.encryption.enabled }}
+        checksum/encryption: {{ include (print $.Template.BasePath "/encryption-secret.yaml") . | sha256sum }}
+        {{- end }}
+    spec:
+      securityContext:
+        fsGroup: 999
+      initContainers:
+        - name: init-permissions
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              mkdir -p /var/lib/postgresql/data
+              chmod 700 /var/lib/postgresql/data
+              chown -R 999:999 /var/lib/postgresql/data
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+        {{- if .Values.encryption.enabled }}
+        - name: init-encryption
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              # Настройка шифрования для PostgreSQL
+              if [ ! -f /var/lib/postgresql/data/pgdata/server.key ]; then
+                echo "Настройка шифрования данных PostgreSQL..."
+                mkdir -p /var/lib/postgresql/data/pgdata
+                
+                # Копирование ключа шифрования
+                cp /encryption/encryption-key /var/lib/postgresql/data/pgdata/server.key
+                chmod 600 /var/lib/postgresql/data/pgdata/server.key
+                chown 999:999 /var/lib/postgresql/data/pgdata/server.key
+                
+                # Генерация самоподписанного сертификата
+                openssl req -new -x509 -key /var/lib/postgresql/data/pgdata/server.key -out /var/lib/postgresql/data/pgdata/server.crt -days 3650 -subj "/CN=postgresql" -nodes
+                chmod 600 /var/lib/postgresql/data/pgdata/server.crt
+                chown 999:999 /var/lib/postgresql/data/pgdata/server.crt
+                
+                echo "Шифрование настроено успешно."
+              else
+                echo "Ключ шифрования уже существует."
+              fi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: encryption-secret
+              mountPath: /encryption
+        {{- end }}
+      containers:
+        - name: postgresql
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: postgresql
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.username | quote }}
+            {{- if not .Values.postgresql.existingSecret }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.postgresql.password | quote }}
+            {{- else }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.existingSecret }}
+                  key: postgresql-password
+            {{- end }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.database | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- if .Values.postgresql.replication.enabled }}
+            - name: POSTGRES_REPLICATION_MODE
+              value: {{ if eq (index (splitList "-" (include "postgresql.fullname" .)) (sub (len (splitList "-" (include "postgresql.fullname" .))) 1)) "0" }}"master"{{ else }}"slave"{{ end }}
+            - name: POSTGRES_REPLICATION_USER
+              value: {{ .Values.postgresql.replication.user | quote }}
+            - name: POSTGRES_REPLICATION_PASSWORD
+              {{- if .Values.postgresql.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.existingSecret }}
+                  key: postgresql-replication-password
+              {{- else }}
+              value: {{ .Values.postgresql.replication.password | quote }}
+              {{- end }}
+            - name: POSTGRES_MASTER_HOST
+              value: {{ include "postgresql.fullname" . }}-0.{{ include "postgresql.fullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local
+            - name: POSTGRES_MASTER_PORT_NUMBER
+              value: "5432"
+            {{- if .Values.postgresql.replication.synchronous }}
+            - name: POSTGRES_SYNCHRONOUS_REPLICAS
+              value: {{ .Values.postgresql.replication.numSynchronousReplicas | quote }}
+            - name: POSTGRES_SYNCHRONOUS_COMMIT_MODE
+              value: "on"
+            {{- end }}
+            {{- end }}
+            {{- if .Values.encryption.enabled }}
+            - name: PGSSLMODE
+              value: "require"
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: postgresql-config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgresql.conf
+            {{- if .Values.encryption.enabled }}
+            - name: encryption-secret
+              mountPath: /encryption
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }} -h 127.0.0.1 -p 5432
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }} -h 127.0.0.1 -p 5432
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }} -h 127.0.0.1 -p 5432
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    # Корректное завершение работы PostgreSQL
+                    pg_ctl -D ${PGDATA} -m fast -w stop
+        {{- if .Values.metrics.enabled }}
+        - name: metrics
+          image: "{{ .Values.metrics.image.repository }}:{{ .Values.metrics.image.tag }}"
+          imagePullPolicy: {{ .Values.metrics.image.pullPolicy }}
+          env:
+            - name: DATA_SOURCE_NAME
+              value: "postgresql://{{ .Values.postgresql.username }}:{{ .Values.postgresql.password }}@localhost:5432/{{ .Values.postgresql.database }}?sslmode=disable"
+          ports:
+            - name: metrics
+              containerPort: 9187
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.metrics.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: postgresql-config
+          configMap:
+            name: {{ include "postgresql.fullname" . }}-config
+        {{- if .Values.encryption.enabled }}
+        - name: encryption-secret
+          secret:
+            secretName: {{ .Values.encryption.existingSecret | default (include "postgresql.fullname" . | printf "%s-encryption") }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - {{ .Values.persistence.accessMode | quote }}
+        {{- if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size | quote }} 

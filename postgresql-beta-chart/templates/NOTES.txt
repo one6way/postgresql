@@ -1,0 +1,27 @@
+PostgreSQL Beta установлен.
+
+1. Получение пароля администратора:
+
+   export POSTGRES_PASSWORD=$(kubectl get secret --namespace {{ .Release.Namespace }} {{ if .Values.postgresql.existingSecret }}{{ .Values.postgresql.existingSecret }}{{ else }}{{ include "postgresql.fullname" . }}-credentials{{ end }} -o jsonpath="{.data.postgresql-password}" | base64 --decode)
+
+2. Подключение к PostgreSQL из внутри кластера:
+
+   kubectl run {{ include "postgresql.fullname" . }}-client --rm --tty -i --restart='Never' --namespace {{ .Release.Namespace }} --image {{ .Values.image.repository }}:{{ .Values.image.tag }} --env="PGPASSWORD=$POSTGRES_PASSWORD" -- psql --host {{ include "postgresql.fullname" . }} -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }} -p {{ .Values.postgresql.port }}
+
+3. Подключение к PostgreSQL извне кластера:
+
+   {{- if contains "NodePort" .Values.service.type }}
+   export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "postgresql.fullname" . }})
+   export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+   psql --host $NODE_IP --port $NODE_PORT -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }}
+   {{- else if contains "LoadBalancer" .Values.service.type }}
+   export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "postgresql.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+   psql --host $SERVICE_IP --port {{ .Values.service.port }} -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }}
+   {{- else if contains "ClusterIP" .Values.service.type }}
+   kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "postgresql.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }} &
+   psql --host 127.0.0.1 --port {{ .Values.service.port }} -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }}
+   {{- end }}
+
+4. Проверка статуса репликации:
+
+   kubectl exec -it {{ include "postgresql.fullname" . }}-0 --namespace {{ .Release.Namespace }} -- psql -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }} -c "SELECT * FROM pg_stat_replication;" 

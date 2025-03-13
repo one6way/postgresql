@@ -1,0 +1,77 @@
+## PostgreSQL конфигурация для тестового окружения
+image:
+  repository: postgres
+  tag: "15.4"
+  pullPolicy: IfNotPresent
+
+## Количество реплик PostgreSQL (для тестового окружения достаточно 2)
+replicaCount: 2
+
+## Настройки ресурсов (уменьшенные для тестового окружения)
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+
+## Настройки хранилища
+persistence:
+  enabled: true
+  storageClass: "standard"  # Используйте подходящий StorageClass для вашего кластера
+  size: 10Gi
+  accessMode: ReadWriteOnce
+
+## Настройки сети
+service:
+  type: ClusterIP
+  port: 5432
+
+## Настройки PostgreSQL
+postgresql:
+  username: postgres
+  password: postgres-test
+  database: postgres
+  
+  # Настройки репликации
+  replication:
+    enabled: true
+    user: replicator
+    password: replpass-test
+    synchronous: false
+    numSynchronousReplicas: 1
+  
+  # Настройки конфигурации PostgreSQL
+  configuration:
+    max_connections: 100
+    shared_buffers: 256MB
+    effective_cache_size: 1GB
+    maintenance_work_mem: 64MB
+    checkpoint_completion_target: 0.9
+    wal_buffers: 16MB
+    default_statistics_target: 100
+    random_page_cost: 1.1
+    effective_io_concurrency: 200
+    work_mem: 4MB
+    min_wal_size: 1GB
+    max_wal_size: 4GB
+
+## Настройки для мониторинга
+metrics:
+  enabled: true
+  image:
+    repository: prometheuscommunity/postgres-exporter
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+## Настройки для бэкапов (для тестового окружения можно отключить)
+backup:
+  enabled: false 

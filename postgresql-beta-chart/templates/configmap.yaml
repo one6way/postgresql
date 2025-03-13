@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "postgresql.fullname" . }}-config
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+data:
+  postgresql.conf: |
+    # Основные настройки
+    listen_addresses = '*'
+    port = {{ .Values.postgresql.port | default 5432 }}
+    max_connections = {{ .Values.postgresql.config.maxConnections | default 100 }}
+    
+    # Настройки памяти
+    shared_buffers = {{ .Values.postgresql.config.sharedBuffers | default "128MB" }}
+    effective_cache_size = {{ .Values.postgresql.config.effectiveCacheSize | default "512MB" }}
+    
+    # Настройки WAL
+    wal_level = replica
+    max_wal_size = {{ .Values.postgresql.config.maxWalSize | default "1GB" }}
+    
+    # Настройки репликации
+    {{- if .Values.postgresql.replication.enabled }}
+    hot_standby = on
+    max_wal_senders = 10
+    max_replication_slots = 10
+    synchronous_commit = {{ .Values.postgresql.replication.synchronousCommit | default "on" }}
+    {{- if gt (.Values.postgresql.replication.numSynchronousReplicas | int) 0 }}
+    synchronous_standby_names = 'FIRST {{ .Values.postgresql.replication.numSynchronousReplicas }}'
+    {{- end }}
+    {{- end }}
+    
+    # Настройки логирования
+    log_connections = {{ .Values.postgresql.config.logConnections | default "off" }}
+    log_disconnections = {{ .Values.postgresql.config.logDisconnections | default "off" }}
+  
+  pg_hba.conf: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    
+    # "local" is for Unix domain socket connections only
+    local   all             all                                     trust
+    
+    # IPv4 local connections:
+    host    all             all             127.0.0.1/32            trust
+    
+    # IPv6 local connections:
+    host    all             all             ::1/128                 trust
+    
+    # Allow replication connections from localhost, by a user with the replication privilege
+    local   replication     all                                     trust
+    host    replication     all             127.0.0.1/32            trust
+    host    replication     all             ::1/128                 trust
+    
+    {{- if .Values.postgresql.replication.enabled }}
+    # Allow replication connections from all hosts
+    host    replication     {{ .Values.postgresql.replication.user }}      all                 md5
+    {{- end }}
+    
+    # Allow connections from all hosts
+    host    all             all             all                     md5 

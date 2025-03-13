@@ -1,0 +1,27 @@
+apiVersion: v2
+name: postgresql
+description: A Helm chart for PostgreSQL with advanced enterprise features for Kubernetes
+type: application
+version: 1.0.0
+appVersion: "14.5"
+keywords:
+  - postgresql
+  - postgres
+  - database
+  - sql
+  - replication
+  - encryption
+  - backup
+  - monitoring
+  - vault
+  - s3
+maintainers:
+  - name: DevOps Engineer
+home: https://github.com/example/postgresql-chart
+sources:
+  - https://github.com/example/postgresql-chart
+  - https://www.postgresql.org/
+icon: https://www.postgresql.org/media/img/about/press/elephant.png
+annotations:
+  category: Database
+  licenses: Apache-2.0 

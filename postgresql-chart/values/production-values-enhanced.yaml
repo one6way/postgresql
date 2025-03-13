@@ -1,0 +1,135 @@
+## PostgreSQL конфигурация для продакшн-окружения с улучшениями
+image:
+  repository: postgres
+  tag: "15.4"
+  pullPolicy: IfNotPresent
+
+## Количество реплик PostgreSQL
+replicaCount: 3
+
+## Настройки автомасштабирования
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+  targetMemoryUtilizationPercentage: 75
+
+## Настройки ресурсов
+resources:
+  requests:
+    memory: "4Gi"
+    cpu: "2000m"
+  limits:
+    memory: "8Gi"
+    cpu: "4000m"
+
+## Настройки хранилища
+persistence:
+  enabled: true
+  storageClass: "managed-premium"  # Используйте подходящий StorageClass для вашего кластера
+  size: 100Gi
+  accessMode: ReadWriteOnce
+
+## Настройки сети
+service:
+  type: ClusterIP
+  port: 5432
+
+## Настройки PostgreSQL
+postgresql:
+  # Для продакшена рекомендуется использовать секреты Kubernetes
+  existingSecret: "postgresql-credentials"
+  
+  # Настройки репликации
+  replication:
+    enabled: true
+    synchronous: true
+    numSynchronousReplicas: 1
+  
+  # Настройки конфигурации PostgreSQL
+  configuration:
+    max_connections: 200
+    shared_buffers: 2GB
+    effective_cache_size: 6GB
+    maintenance_work_mem: 512MB
+    checkpoint_completion_target: 0.9
+    wal_buffers: 16MB
+    default_statistics_target: 100
+    random_page_cost: 1.1
+    effective_io_concurrency: 200
+    work_mem: 8MB
+    min_wal_size: 2GB
+    max_wal_size: 8GB
+
+## Настройки для мониторинга
+metrics:
+  enabled: true
+  image:
+    repository: prometheuscommunity/postgres-exporter
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "200m"
+  # Настройки ServiceMonitor для Prometheus Operator
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    scrapeTimeout: 10s
+    additionalLabels:
+      release: prometheus
+
+## Настройки для бэкапов
+backup:
+  enabled: true
+  schedule: "0 */6 * * *"  # Каждые 6 часов
+  image:
+    repository: bitnami/postgresql
+    tag: latest
+    pullPolicy: IfNotPresent
+  retentionDays: 30
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  diskSpaceThreshold: 75
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "300m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  # Настройки для S3
+  s3:
+    enabled: true
+    bucket: "postgres-backups-prod"
+    path: "backups"
+    region: "eu-west-1"
+    existingSecret: "postgres-s3-credentials"
+
+## Настройки шифрования данных
+encryption:
+  enabled: true
+  existingSecret: "postgresql-encryption-key"
+
+## Настройки интеграции с Vault
+vault:
+  enabled: true
+  image:
+    repository: hashicorp/vault
+    tag: "1.12.0"
+    pullPolicy: IfNotPresent
+  secretPath: "secret/data/postgresql/prod"
+  role: "postgresql-prod"
+  serviceAccountName: "vault-auth"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "200m" 

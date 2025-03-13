@@ -1,0 +1,170 @@
+{{- if .Values.vault.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.vault.serviceAccountName | default (printf "%s-vault" (include "postgresql.fullname" .)) }}
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vault-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "postgresql.fullname" . }}-vault-role
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vault-agent
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "postgresql.fullname" . }}-vault-rolebinding
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vault-agent
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.vault.serviceAccountName | default (printf "%s-vault" (include "postgresql.fullname" .)) }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "postgresql.fullname" . }}-vault-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "postgresql.fullname" . }}-vault-agent
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vault-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "postgresql.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: vault-agent
+  template:
+    metadata:
+      labels:
+        {{- include "postgresql.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: vault-agent
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-secret-postgresql: {{ .Values.vault.secretPath | quote }}
+        vault.hashicorp.com/role: {{ .Values.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-template-postgresql: |
+          {{`{{- with secret "`}}{{ .Values.vault.secretPath }}{{`" -}}
+          {
+            "postgresql-password": "{{.Data.data.password}}",
+            "postgresql-replication-password": "{{.Data.data.replication_password}}"
+          }
+          {{- end }}`}}
+    spec:
+      serviceAccountName: {{ .Values.vault.serviceAccountName | default (printf "%s-vault" (include "postgresql.fullname" .)) }}
+      containers:
+        - name: vault-agent
+          image: "{{ .Values.vault.image.repository }}:{{ .Values.vault.image.tag }}"
+          imagePullPolicy: {{ .Values.vault.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              
+              # Функция для логирования
+              log() {
+                echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+              }
+              
+              # Функция для обновления секрета
+              update_secret() {
+                log "Обновление секрета PostgreSQL из Vault..."
+                
+                # Проверка наличия файла с секретами
+                if [ ! -f /vault/secrets/postgresql ]; then
+                  log "ОШИБКА: Файл с секретами Vault не найден"
+                  return 1
+                fi
+                
+                # Извлечение паролей из секрета Vault
+                POSTGRES_PASSWORD=$(cat /vault/secrets/postgresql | jq -r '.["postgresql-password"]')
+                REPLICATION_PASSWORD=$(cat /vault/secrets/postgresql | jq -r '.["postgresql-replication-password"]')
+                
+                if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$REPLICATION_PASSWORD" ]; then
+                  log "ОШИБКА: Не удалось извлечь пароли из секрета Vault"
+                  return 1
+                fi
+                
+                # Создание или обновление секрета Kubernetes
+                SECRET_NAME="{{ .Values.postgresql.existingSecret | default (printf "%s-credentials" (include "postgresql.fullname" .)) }}"
+                
+                # Проверка существования секрета
+                if kubectl get secret $SECRET_NAME -n {{ .Release.Namespace }} &>/dev/null; then
+                  log "Обновление существующего секрета $SECRET_NAME"
+                  kubectl create secret generic $SECRET_NAME \
+                    --from-literal=postgresql-password=$POSTGRES_PASSWORD \
+                    --from-literal=postgresql-replication-password=$REPLICATION_PASSWORD \
+                    --dry-run=client -o yaml | kubectl apply -f -
+                else
+                  log "Создание нового секрета $SECRET_NAME"
+                  kubectl create secret generic $SECRET_NAME \
+                    --from-literal=postgresql-password=$POSTGRES_PASSWORD \
+                    --from-literal=postgresql-replication-password=$REPLICATION_PASSWORD
+                fi
+                
+                # Проверка успешного обновления секрета
+                if [ $? -eq 0 ]; then
+                  log "Секрет $SECRET_NAME успешно обновлен"
+                  
+                  # Проверка необходимости перезапуска PostgreSQL
+                  if [ "{{ .Values.vault.restartOnSecretChange }}" = "true" ]; then
+                    log "Перезапуск StatefulSet PostgreSQL..."
+                    kubectl rollout restart statefulset {{ include "postgresql.fullname" . }} -n {{ .Release.Namespace }}
+                  fi
+                  
+                  return 0
+                else
+                  log "ОШИБКА: Не удалось обновить секрет $SECRET_NAME"
+                  return 1
+                fi
+              }
+              
+              # Инициализация - обновление секрета при запуске
+              update_secret
+              
+              # Основной цикл - периодическая проверка обновлений секретов
+              while true; do
+                # Сохранение хэша текущего секрета для сравнения
+                CURRENT_HASH=""
+                if [ -f /vault/secrets/postgresql ]; then
+                  CURRENT_HASH=$(md5sum /vault/secrets/postgresql | awk '{print $1}')
+                fi
+                
+                # Ожидание обновления секрета Vault
+                sleep {{ .Values.vault.refreshInterval | default 300 }}
+                
+                # Проверка изменения секрета
+                NEW_HASH=""
+                if [ -f /vault/secrets/postgresql ]; then
+                  NEW_HASH=$(md5sum /vault/secrets/postgresql | awk '{print $1}')
+                fi
+                
+                if [ "$CURRENT_HASH" != "$NEW_HASH" ] && [ -n "$NEW_HASH" ]; then
+                  log "Обнаружено изменение секрета Vault"
+                  update_secret
+                fi
+              done
+          resources:
+            {{- toYaml .Values.vault.resources | nindent 12 }}
+{{- end }} 

@@ -1,0 +1,147 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "postgresql.fullname" . }}-backup
+  labels:
+    {{- include "postgresql.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.backup.successfulJobsHistoryLimit | default 3 }}
+  failedJobsHistoryLimit: {{ .Values.backup.failedJobsHistoryLimit | default 3 }}
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: backup
+              image: "{{ .Values.backup.image.repository }}:{{ .Values.backup.image.tag }}"
+              imagePullPolicy: {{ .Values.backup.image.pullPolicy | default "IfNotPresent" }}
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -e
+                  
+                  # Функция для логирования
+                  log() {
+                    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+                  }
+                  
+                  # Установка времени и даты для имени файла
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  BACKUP_FILE="postgres_${TIMESTAMP}.sql.gz"
+                  BACKUP_PATH="/backups/${BACKUP_FILE}"
+                  
+                  # Создание резервной копии
+                  log "Создание резервной копии PostgreSQL..."
+                  if ! pg_dump -h {{ include "postgresql.fullname" . }} -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }} -F c | gzip > ${BACKUP_PATH}; then
+                    log "ОШИБКА: Не удалось создать резервную копию PostgreSQL"
+                    exit 1
+                  fi
+                  
+                  log "Резервная копия успешно создана: ${BACKUP_PATH}"
+                  
+                  # Загрузка в S3 если настроено
+                  {{- if .Values.backup.s3.enabled }}
+                  log "Проверка наличия AWS CLI..."
+                  if ! command -v aws &> /dev/null; then
+                    log "ОШИБКА: AWS CLI не установлен. Установка AWS CLI..."
+                    apt-get update && apt-get install -y curl unzip
+                    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                    unzip awscliv2.zip
+                    ./aws/install
+                  fi
+                  
+                  if command -v aws &> /dev/null; then
+                    log "Загрузка резервной копии в S3..."
+                    
+                    # Настройка AWS CLI
+                    export AWS_ACCESS_KEY_ID="{{ .Values.backup.s3.accessKey }}"
+                    export AWS_SECRET_ACCESS_KEY="{{ .Values.backup.s3.secretKey }}"
+                    export AWS_DEFAULT_REGION="{{ .Values.backup.s3.region }}"
+                    
+                    # Загрузка в S3
+                    S3_PATH="{{ .Values.backup.s3.bucket }}/{{ .Values.backup.s3.path }}/${BACKUP_FILE}"
+                    
+                    # Попытка загрузки с повторами
+                    MAX_RETRIES=3
+                    RETRY_COUNT=0
+                    UPLOAD_SUCCESS=false
+                    
+                    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$UPLOAD_SUCCESS" = false ]; do
+                      if aws s3 cp ${BACKUP_PATH} s3://${S3_PATH}; then
+                        UPLOAD_SUCCESS=true
+                        log "Резервная копия успешно загружена в S3: s3://${S3_PATH}"
+                        
+                        # Добавление метаданных для отслеживания
+                        echo "${TIMESTAMP},${BACKUP_FILE},s3://${S3_PATH}" >> /backups/backup_history.csv
+                      else
+                        RETRY_COUNT=$((RETRY_COUNT+1))
+                        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                          log "Ошибка при загрузке в S3. Повторная попытка $RETRY_COUNT из $MAX_RETRIES..."
+                          sleep 5
+                        else
+                          log "ОШИБКА: Не удалось загрузить резервную копию в S3 после $MAX_RETRIES попыток"
+                        fi
+                      fi
+                    done
+                  else
+                    log "ОШИБКА: Не удалось установить AWS CLI. Резервная копия будет сохранена только локально."
+                  fi
+                  {{- else }}
+                  log "Загрузка в S3 отключена. Резервная копия сохранена локально."
+                  {{- end }}
+                  
+                  # Ротация локальных резервных копий
+                  log "Удаление старых резервных копий (старше {{ .Values.backup.retentionDays }} дней)..."
+                  find /backups -name "postgres_*.sql.gz" -type f -mtime +{{ .Values.backup.retentionDays }} -delete
+                  
+                  # Проверка свободного места
+                  DISK_USAGE=$(df -h /backups | awk 'NR==2 {print $5}' | sed 's/%//')
+                  if [ $DISK_USAGE -gt {{ .Values.backup.diskSpaceThreshold | default 80 }} ]; then
+                    log "ВНИМАНИЕ: Использование диска превышает {{ .Values.backup.diskSpaceThreshold | default 80 }}% (текущее: ${DISK_USAGE}%)"
+                    
+                    # Если место на диске критически мало, удаляем старые резервные копии
+                    if [ $DISK_USAGE -gt 90 ]; then
+                      log "Критически мало места на диске. Удаление старых резервных копий..."
+                      ls -t /backups/postgres_*.sql.gz | tail -n +6 | xargs rm -f
+                    fi
+                  fi
+                  
+                  log "Резервное копирование завершено успешно"
+              env:
+                - name: PGPASSWORD
+                  {{- if .Values.postgresql.existingSecret }}
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.postgresql.existingSecret }}
+                      key: postgresql-password
+                  {{- else }}
+                  value: {{ .Values.postgresql.password | quote }}
+                  {{- end }}
+                {{- if .Values.backup.s3.enabled }}
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3.existingSecret | default (printf "%s-backup-s3" (include "postgresql.fullname" .)) }}
+                      key: access-key
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3.existingSecret | default (printf "%s-backup-s3" (include "postgresql.fullname" .)) }}
+                      key: secret-key
+                {{- end }}
+              volumeMounts:
+                - name: backup-volume
+                  mountPath: /backups
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+          restartPolicy: OnFailure
+          volumes:
+            - name: backup-volume
+              persistentVolumeClaim:
+                claimName: {{ include "postgresql.fullname" . }}-backup-pvc
+{{- end }} 

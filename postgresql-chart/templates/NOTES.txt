@@ -1,0 +1,39 @@
+PostgreSQL кластер успешно установлен!
+
+Для подключения к вашей базе данных:
+
+1. Запустите клиентский под PostgreSQL:
+
+   kubectl run {{ include "postgresql.fullname" . }}-client --rm --tty -i --restart='Never' --namespace {{ .Release.Namespace }} --image {{ .Values.image.repository }}:{{ .Values.image.tag }} --env="PGPASSWORD={{ .Values.postgresql.password }}" --command -- psql -h {{ include "postgresql.fullname" . }} -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }}
+
+2. Для подключения к вашей базе данных из вне кластера:
+
+   {{- if contains "NodePort" .Values.service.type }}
+   export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "postgresql.fullname" . }})
+   export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+   echo "PostgreSQL доступен по адресу: $NODE_IP:$NODE_PORT"
+   
+   {{- else if contains "LoadBalancer" .Values.service.type }}
+   export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "postgresql.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+   echo "PostgreSQL доступен по адресу: $SERVICE_IP:{{ .Values.service.port }}"
+   
+   {{- else if contains "ClusterIP" .Values.service.type }}
+   echo "PostgreSQL доступен только внутри кластера по адресу: {{ include "postgresql.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}"
+   echo "Для доступа извне кластера используйте port-forward:"
+   echo "kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "postgresql.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}"
+   {{- end }}
+
+3. Информация о репликации:
+   {{- if .Values.postgresql.replication.enabled }}
+   Мастер: {{ include "postgresql.fullname" . }}-0.{{ include "postgresql.fullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local
+   Реплики: {{ include "postgresql.fullname" . }}-[1-{{ sub .Values.replicaCount 1 }}].{{ include "postgresql.fullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local
+   {{- else }}
+   Репликация отключена. Для включения репликации установите .Values.postgresql.replication.enabled=true
+   {{- end }}
+
+4. Мониторинг:
+   {{- if .Values.metrics.enabled }}
+   Метрики PostgreSQL доступны по адресу: {{ include "postgresql.fullname" . }}-metrics.{{ .Release.Namespace }}.svc.cluster.local:9187
+   {{- else }}
+   Мониторинг отключен. Для включения мониторинга установите .Values.metrics.enabled=true
+   {{- end }} 
